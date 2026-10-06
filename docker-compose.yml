@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # 1. Banco de Dados MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: pix_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: pix_db
+      MYSQL_USER: pix_user
+      MYSQL_PASSWORD: pix_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - pix_network
+
+  # 2. Zookeeper (Dependência do Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: pix_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - pix_network
+
+  # 3. Apache Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pix_kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Disponível internamente (29092) para o Logstash e externamente (9092) para sua API Spring/Node
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - pix_network
+
+  # 4. Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: pix_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false # Desativado para facilitar dev local
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # Limite de memória
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - pix_network
+
+  # 5. Logstash
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.2
+    container_name: pix_logstash
+    depends_on:
+      - elasticsearch
+      - kafka
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    ports:
+      - "5044:5044"
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
+    networks:
+      - pix_network
+
+  # 6. Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    container_name: pix_kibana
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    networks:
+      - pix_network
+
+volumes:
+  mysql_data:
+  es_data:
+
+networks:
+  pix_network:
+    driver: bridge
